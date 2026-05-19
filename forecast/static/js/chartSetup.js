@@ -11,18 +11,9 @@
         }
     }
 
-    function collectSeries(prefix, count, fallback) {
-        var out = [];
-        for (var i = 1; i <= count; i++) {
-            var value = readJSON(prefix + i);
-            out.push(value === null || value === undefined ? fallback : value);
-        }
-        return out;
-    }
-
-    var labels       = collectSeries("time", 5, "--:--");
-    var temperatures = collectSeries("temp", 5, 0).map(Number);
-    var humidities   = collectSeries("hum",  5, 0).map(Number);
+    var labels       = readJSON("forecastTimes") || [];
+    var temperatures = (readJSON("forecastTemps") || []).map(Number);
+    var humidities   = (readJSON("forecastHumidity") || []).map(Number);
 
     var canvas = document.getElementById("forecastChart");
     if (!canvas) return;

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "weather-app",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["manage.py", "runserver", "0.0.0.0:8002"],
+      "port": 8002
+    }
+  ]
+}

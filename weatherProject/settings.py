@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-fil4b)5)5d!nt)%u%jwit#rox2nzr_5a3%4od$!(u#+4tzn#t)
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -48,6 +48,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'forecast.middleware.VisitorTrackingMiddleware',
 ]
 
 ROOT_URLCONF = 'weatherProject.urls'

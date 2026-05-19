@@ -189,8 +189,8 @@
         <!-- Hourly Forecast Chart -->
         <section class="forecast-card glass">
             <div class="forecast-header">
-                <h2 class="forecast-title">Next 5 Hours</h2>
-                <p class="forecast-subtitle">Temperature &amp; humidity trends</p>
+                <h2 class="forecast-title">Next 8 Hours</h2>
+                <p class="forecast-subtitle">Temperature &amp; humidity trends (live data)</p>
             </div>
 
             <div class="forecast-chart-wrapper">
@@ -198,31 +198,13 @@
             </div>
 
             <div class="forecast-pills">
+                {% for time_val, temp_val, hum_val in forecast_hours %}
                 <div class="hour-pill">
-                    <span class="hour-time">{{ time1 }}</span>
-                    <span class="hour-temp">{{ temp1 }}&deg;</span>
-                    <span class="hour-hum">{{ hum1 }}%</span>
+                    <span class="hour-time">{{ time_val }}</span>
+                    <span class="hour-temp">{{ temp_val }}&deg;</span>
+                    <span class="hour-hum">{{ hum_val }}%</span>
                 </div>
-                <div class="hour-pill">
-                    <span class="hour-time">{{ time2 }}</span>
-                    <span class="hour-temp">{{ temp2 }}&deg;</span>
-                    <span class="hour-hum">{{ hum2 }}%</span>
-                </div>
-                <div class="hour-pill">
-                    <span class="hour-time">{{ time3 }}</span>
-                    <span class="hour-temp">{{ temp3 }}&deg;</span>
-                    <span class="hour-hum">{{ hum3 }}%</span>
-                </div>
-                <div class="hour-pill">
-                    <span class="hour-time">{{ time4 }}</span>
-                    <span class="hour-temp">{{ temp4 }}&deg;</span>
-                    <span class="hour-hum">{{ hum4 }}%</span>
-                </div>
-                <div class="hour-pill">
-                    <span class="hour-time">{{ time5 }}</span>
-                    <span class="hour-temp">{{ temp5 }}&deg;</span>
-                    <span class="hour-hum">{{ hum5 }}%</span>
-                </div>
+                {% endfor %}
             </div>
         </section>
 
@@ -258,21 +240,9 @@
         </footer>
 
         <!-- JSON payload for chart -->
-        {{ time1|json_script:"time1" }}
-        {{ time2|json_script:"time2" }}
-        {{ time3|json_script:"time3" }}
-        {{ time4|json_script:"time4" }}
-        {{ time5|json_script:"time5" }}
-        {{ temp1|json_script:"temp1" }}
-        {{ temp2|json_script:"temp2" }}
-        {{ temp3|json_script:"temp3" }}
-        {{ temp4|json_script:"temp4" }}
-        {{ temp5|json_script:"temp5" }}
-        {{ hum1|json_script:"hum1" }}
-        {{ hum2|json_script:"hum2" }}
-        {{ hum3|json_script:"hum3" }}
-        {{ hum4|json_script:"hum4" }}
-        {{ hum5|json_script:"hum5" }}
+        {{ forecast_times|json_script:"forecastTimes" }}
+        {{ forecast_temps|json_script:"forecastTemps" }}
+        {{ forecast_humidity|json_script:"forecastHumidity" }}
 
         {{ trend_times|json_script:"trendTimes" }}
         {{ trend_temps|json_script:"trendTemps" }}
@@ -292,7 +262,8 @@
                 </svg>
             </div>
             <h2 class="empty-title">Where are we looking today?</h2>
-            <p class="empty-text">Enter any city above to see real-time conditions and a 6-hour rain forecast powered by machine learning.</p>
+            <p class="empty-text">Enter any city above to see real-time conditions and a 8-hour rain forecast powered by machine learning.</p>
+            <p class="empty-text">It also shows the 24-hour temperature and humidity trends.</p>
         </section>
         {% endif %}
 

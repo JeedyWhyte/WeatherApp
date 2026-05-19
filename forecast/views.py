@@ -88,9 +88,9 @@ def fetch_forecast_and_history(lat, lon, hours_forcast=12):
             "precipitation",
             "precipitation_probability",
             "rain",
-            "cloudcover",
-            "windspeed_10m",
-            "winddirection_10m",
+            "cloud_cover",
+            "wind_speed_10m",
+            "wind_direction_10m",
         ],
         "past_days": 1,
         "forecast_days": 2,
@@ -358,7 +358,7 @@ def get_or_train_model(lat, lon):
 
         print("Training rain prediction model with HistGradientBoosting...")
         X, y = prepare_training_data(df)
-        model = train_rain_model(X, y)
+        model, metrics = train_rain_model(X, y)
 
         joblib.dump(model, model_path)
         print("Model saved successfully.")
@@ -567,16 +567,18 @@ def weather_view(request):
 
             rain_model = get_or_train_model(lat, lon)
 
+            num_forecast_hours = 8
+
             if forecast_data:
                 df = forecast_data['df']
                 idx = forecast_data['current_idx']
 
-                future_idx = range(idx + 1, min(idx + 6, len(df)))
+                future_idx = range(idx + 1, min(idx + 1 + num_forecast_hours, len(df)))
                 future_times = [df.loc[i, 'time'].strftime('%H:%M') for i in future_idx]
                 future_temps = [round(df.loc[i, 'temperature_2m'], 1) for i in future_idx]
                 future_humidity = [int(df.loc[i, 'relative_humidity_2m']) for i in future_idx]
 
-                while len(future_times) < 5:
+                while len(future_times) < num_forecast_hours:
                     future_times.append("--:--")
                     future_temps.append(current_weather['current_temp'])
                     future_humidity.append(current_weather['humidity'])
@@ -584,9 +586,9 @@ def weather_view(request):
                 tz_offset = current_weather.get('timezone_offset', 0)
                 now = datetime.now(timezone.utc) + timedelta(seconds=tz_offset)
                 next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-                future_times = [(next_hour + timedelta(hours=i)).strftime("%H:%M") for i in range(5)]
-                future_temps = [current_weather['current_temp']] * 5
-                future_humidity = [current_weather['humidity']] * 5
+                future_times = [(next_hour + timedelta(hours=i)).strftime("%H:%M") for i in range(num_forecast_hours)]
+                future_temps = [current_weather['current_temp']] * num_forecast_hours
+                future_humidity = [current_weather['humidity']] * num_forecast_hours
 
             if rain_model is not None:
                 rain_prob, rain_pred = predict_rain_probability(
@@ -643,23 +645,10 @@ def weather_view(request):
                 'rain_probability': round(rain_prob * 100),
                 'rain_prediction': 'Yes' if rain_pred == 1 else 'No',
 
-                'time1': future_times[0],
-                'time2': future_times[1],
-                'time3': future_times[2],
-                'time4': future_times[3],
-                'time5': future_times[4],
-
-                'temp1': future_temps[0],
-                'temp2': future_temps[1],
-                'temp3': future_temps[2],
-                'temp4': future_temps[3],
-                'temp5': future_temps[4],
-
-                'hum1': future_humidity[0],
-                'hum2': future_humidity[1],
-                'hum3': future_humidity[2],
-                'hum4': future_humidity[3],
-                'hum5': future_humidity[4],
+                'forecast_times': future_times,
+                'forecast_temps': future_temps,
+                'forecast_humidity': future_humidity,
+                'forecast_hours': list(zip(future_times, future_temps, future_humidity)),
 
                 'recommendations': recommendations,
 
