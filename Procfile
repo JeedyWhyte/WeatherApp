@@ -1,1 +1,1 @@
-web: python manage.py collectstatic --noinput && gunicorn weatherProject.wsgi --bind 0.0.0.0:$PORT
+web: gunicorn weatherProject.wsgi --bind 0.0.0.0:$PORT --timeout 120 --workers 2
