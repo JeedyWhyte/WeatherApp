@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from django.http import JsonResponse
 
 import os
 import requests
@@ -38,6 +39,22 @@ def get_current_weather(city):
     if response.status_code != 200:
         raise Exception(data.get("message", "City not found"))
 
+    return _parse_weather_response(data)
+
+
+def get_current_weather_by_coords(lat, lon):
+    url = f"{OPENWEATHERMAP_BASE_URL}weather?lat={lat}&lon={lon}&appid={OPENWEATHERMAP_API_KEY}&units=metric"
+
+    response = requests.get(url, timeout=10)
+    data = response.json()
+
+    if response.status_code != 200:
+        raise Exception(data.get("message", "Location not found"))
+
+    return _parse_weather_response(data)
+
+
+def _parse_weather_response(data):
     timezone_offset = data.get("timezone", 0)
 
     sunrise_utc = datetime.fromtimestamp(data["sys"]["sunrise"], tz=timezone.utc)
@@ -72,6 +89,73 @@ def get_current_weather(city):
         "day_length": round(day_length, 1),
         "timezone_offset": timezone_offset,
     }
+
+
+# 1b. REVERSE GEOCODING
+def reverse_geocode(lat, lon):
+    url = "https://api.openweathermap.org/geo/1.0/reverse"
+    params = {"lat": lat, "lon": lon, "limit": 1, "appid": OPENWEATHERMAP_API_KEY}
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        if data and len(data) > 0:
+            item = data[0]
+            name = item.get("name", "Unknown")
+            state = item.get("state", "")
+            country = item.get("country", "")
+            parts = [p for p in [name, state, country] if p]
+            return {"name": name, "state": state, "country": country, "display_name": ", ".join(parts)}
+    except Exception as e:
+        print(f"Reverse geocode error: {e}")
+    return {"name": "Unknown", "state": "", "country": "", "display_name": f"{lat}, {lon}"}
+
+
+# 1c. LOCATION SEARCH SUGGESTIONS
+BROAD_LOCATION_TYPES = {"country"}
+
+def location_suggestions(request):
+    query = request.GET.get("q", "").strip()
+    if len(query) < 2:
+        return JsonResponse([], safe=False)
+
+    url = "https://api.openweathermap.org/geo/1.0/direct"
+    params = {"q": query, "limit": 5, "appid": OPENWEATHERMAP_API_KEY}
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+
+        results = []
+        for item in data:
+            name = item.get("name", "")
+            state = item.get("state", "")
+            country = item.get("country", "")
+            lat = item.get("lat")
+            lon = item.get("lon")
+            parts = [p for p in [name, state, country] if p]
+            display_name = ", ".join(parts)
+
+            is_broad = (
+                not state
+                and name.lower() == query.lower()
+                and len(data) == 1
+                and country
+                and name.lower() == country.lower()
+            )
+
+            results.append({
+                "name": name,
+                "state": state,
+                "country": country,
+                "lat": lat,
+                "lon": lon,
+                "display_name": display_name,
+                "is_broad": is_broad,
+            })
+
+        return JsonResponse(results, safe=False)
+    except Exception as e:
+        print(f"Location suggestions error: {e}")
+        return JsonResponse([], safe=False)
 
 
 # 2. FETCH RECENT WEATHER AND FORECAST FROM OPEN METEO
@@ -548,124 +632,160 @@ def generate_recommendations(current_weather, forecast_data, rain_probability):
     return recommendations
 
 
-# 11. MAIN VIEW FUNCTION
+# 11. SHARED RENDERING LOGIC
+def _render_weather(request, current_weather, city_label):
+    lat = current_weather["lat"]
+    lon = current_weather["lon"]
+
+    forecast_data = fetch_forecast_and_history(lat, lon)
+
+    rain_model = get_or_train_model(lat, lon)
+
+    num_forecast_hours = 8
+
+    if forecast_data:
+        df = forecast_data['df']
+        idx = forecast_data['current_idx']
+
+        future_idx = range(idx + 1, min(idx + 1 + num_forecast_hours, len(df)))
+        future_times = [df.loc[i, 'time'].strftime('%H:%M') for i in future_idx]
+        future_temps = [round(df.loc[i, 'temperature_2m'], 1) for i in future_idx]
+        future_humidity = [int(df.loc[i, 'relative_humidity_2m']) for i in future_idx]
+
+        while len(future_times) < num_forecast_hours:
+            future_times.append("--:--")
+            future_temps.append(current_weather['current_temp'])
+            future_humidity.append(current_weather['humidity'])
+    else:
+        tz_offset = current_weather.get('timezone_offset', 0)
+        now = datetime.now(timezone.utc) + timedelta(seconds=tz_offset)
+        next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+        future_times = [(next_hour + timedelta(hours=i)).strftime("%H:%M") for i in range(num_forecast_hours)]
+        future_temps = [current_weather['current_temp']] * num_forecast_hours
+        future_humidity = [current_weather['humidity']] * num_forecast_hours
+
+    if rain_model is not None:
+        rain_prob, rain_pred = predict_rain_probability(
+            rain_model, current_weather, forecast_data
+        )
+    else:
+        if forecast_data:
+            df = forecast_data['df']
+            idx = forecast_data['current_idx']
+            next_6h = range(idx, min(idx + 6, len(df)))
+            rain_prob = max(df.loc[i, 'precipitation_probability'] for i in next_6h) / 100
+        else:
+            rain_prob = 0.3
+        rain_pred = 1 if rain_prob > 0.5 else 0
+
+    recommendations = generate_recommendations(current_weather, forecast_data, rain_prob)
+
+    trend_data = get_trend_data(forecast_data)
+
+    tz_offset = current_weather.get('timezone_offset', 0)
+    local_time = datetime.now(timezone.utc) + timedelta(seconds=tz_offset)
+
+    context = {
+        'location': city_label,
+        'city': current_weather['city'],
+        'country': current_weather['country'],
+
+        'current_temp': current_weather['current_temp'],
+        'feels_like': current_weather['feels_like'],
+        'MinTemp': current_weather['temp_min'],
+        'MaxTemp': current_weather['temp_max'],
+        'humidity': current_weather['humidity'],
+        'clouds': current_weather['clouds'],
+        'description': current_weather['description'],
+        'main_weather': current_weather['main_weather'],
+        'icon': current_weather['icon'],
+
+        'wind_speed': current_weather['wind_speed'],
+        'wind_deg': current_weather['wind_deg'],
+        'wind_direction': get_wind_direction_text(current_weather['wind_deg']),
+
+        'pressure': current_weather['pressure'],
+        'visibility': round(current_weather['visibility'] / 1000, 1),
+
+        'sunrise': current_weather['sunrise'],
+        'sunset': current_weather['sunset'],
+        'day_length': current_weather['day_length'],
+
+        'date': local_time.strftime("%B %d, %Y"),
+
+        'rain_probability': round(rain_prob * 100),
+        'rain_prediction': 'Yes' if rain_pred == 1 else 'No',
+
+        'forecast_times': future_times,
+        'forecast_temps': future_temps,
+        'forecast_humidity': future_humidity,
+        'forecast_hours': list(zip(future_times, future_temps, future_humidity)),
+
+        'recommendations': recommendations,
+
+        'lat': lat,
+        'lon': lon,
+
+        'model_type': 'HistGradientBoosting (Real Trends)',
+        'data_source': 'Open-Meteo (365 days hourly)',
+
+        'trend_times': trend_data['times'] if trend_data else [],
+        'trend_temps': trend_data['temps'] if trend_data else [],
+        'trend_humidities': trend_data['humidities'] if trend_data else [],
+        'trend_current_pos': trend_data['current_position'] if trend_data else 0,
+    }
+    return render(request, 'weather.html', context)
+
+
+# 12. MAIN VIEW FUNCTION
 def weather_view(request):
     if request.method == 'POST':
+        lat = request.POST.get('lat', '').strip()
+        lon = request.POST.get('lon', '').strip()
         city = request.POST.get('city', '').strip()
+        display_name = request.POST.get('display_name', '').strip()
+
+        if lat and lon:
+            try:
+                lat_f, lon_f = float(lat), float(lon)
+                if not (-90 <= lat_f <= 90 and -180 <= lon_f <= 180):
+                    raise ValueError("Invalid coordinates")
+                current_weather = get_current_weather_by_coords(lat_f, lon_f)
+                label = display_name or current_weather['city']
+                return _render_weather(request, current_weather, label)
+            except (ValueError, TypeError):
+                return render(request, 'weather.html', {'error': 'Invalid location coordinates'})
+            except Exception as e:
+                print(f"Coord weather error: {e}")
+                return render(request, 'weather.html', {'error': str(e), 'location': city or display_name})
 
         if not city:
-            # FIX 1: was 'weather,html' (comma instead of dot)
-            return render(request, 'weather.html', {'error': 'Please Enter A City Name'})
+            return render(request, 'weather.html', {'error': 'Please enter a city name or use current location'})
 
         try:
             current_weather = get_current_weather(city)
-
-            lat = current_weather["lat"]
-            lon = current_weather["lon"]
-
-            forecast_data = fetch_forecast_and_history(lat, lon)
-
-            rain_model = get_or_train_model(lat, lon)
-
-            num_forecast_hours = 8
-
-            if forecast_data:
-                df = forecast_data['df']
-                idx = forecast_data['current_idx']
-
-                future_idx = range(idx + 1, min(idx + 1 + num_forecast_hours, len(df)))
-                future_times = [df.loc[i, 'time'].strftime('%H:%M') for i in future_idx]
-                future_temps = [round(df.loc[i, 'temperature_2m'], 1) for i in future_idx]
-                future_humidity = [int(df.loc[i, 'relative_humidity_2m']) for i in future_idx]
-
-                while len(future_times) < num_forecast_hours:
-                    future_times.append("--:--")
-                    future_temps.append(current_weather['current_temp'])
-                    future_humidity.append(current_weather['humidity'])
-            else:
-                tz_offset = current_weather.get('timezone_offset', 0)
-                now = datetime.now(timezone.utc) + timedelta(seconds=tz_offset)
-                next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-                future_times = [(next_hour + timedelta(hours=i)).strftime("%H:%M") for i in range(num_forecast_hours)]
-                future_temps = [current_weather['current_temp']] * num_forecast_hours
-                future_humidity = [current_weather['humidity']] * num_forecast_hours
-
-            if rain_model is not None:
-                rain_prob, rain_pred = predict_rain_probability(
-                    rain_model, current_weather, forecast_data
-                )
-            else:
-                if forecast_data:
-                    df = forecast_data['df']
-                    idx = forecast_data['current_idx']
-                    next_6h = range(idx, min(idx + 6, len(df)))
-                    rain_prob = max(df.loc[i, 'precipitation_probability'] for i in next_6h) / 100
-                else:
-                    rain_prob = 0.3
-                rain_pred = 1 if rain_prob > 0.5 else 0
-
-            # FIX 2: was generate_recommendations(current_weather, rain_prob, forecast_data)
-            # correct order: (current_weather, forecast_data, rain_probability)
-            recommendations = generate_recommendations(current_weather, forecast_data, rain_prob)
-
-            trend_data = get_trend_data(forecast_data)
-
-            tz_offset = current_weather.get('timezone_offset', 0)
-            local_time = datetime.now(timezone.utc) + timedelta(seconds=tz_offset)
-
-            context = {
-                'location': city,
-                'city': current_weather['city'],
-                'country': current_weather['country'],
-
-                'current_temp': current_weather['current_temp'],
-                'feels_like': current_weather['feels_like'],
-                'MinTemp': current_weather['temp_min'],
-                'MaxTemp': current_weather['temp_max'],
-                'humidity': current_weather['humidity'],
-                # FIX 3: was current_weather['clpuds'] (typo)
-                'clouds': current_weather['clouds'],
-                'description': current_weather['description'],
-                'main_weather': current_weather['main_weather'],
-                'icon': current_weather['icon'],
-
-                'wind_speed': current_weather['wind_speed'],
-                'wind_deg': current_weather['wind_deg'],
-                'wind_direction': get_wind_direction_text(current_weather['wind_deg']),
-
-                'pressure': current_weather['pressure'],
-                'visibility': round(current_weather['visibility'] / 1000, 1),
-
-                'sunrise': current_weather['sunrise'],
-                'sunset': current_weather['sunset'],
-                'day_length': current_weather['day_length'],
-
-                'date': local_time.strftime("%B %d, %Y"),
-
-                'rain_probability': round(rain_prob * 100),
-                'rain_prediction': 'Yes' if rain_pred == 1 else 'No',
-
-                'forecast_times': future_times,
-                'forecast_temps': future_temps,
-                'forecast_humidity': future_humidity,
-                'forecast_hours': list(zip(future_times, future_temps, future_humidity)),
-
-                'recommendations': recommendations,
-
-                'model_type': 'HistGradientBoosting (Real Trends)',
-                'data_source': 'Open-Meteo (365 days hourly)',
-
-                'trend_times': trend_data['times'] if trend_data else [],
-                'trend_temps': trend_data['temps'] if trend_data else [],
-                'trend_humidities': trend_data['humidities'] if trend_data else [],
-                'trend_current_pos': trend_data['current_position'] if trend_data else 0,
-            }
-            # FIX 4: was 'waether.html' (typo)
-            return render(request, 'weather.html', context)
+            return _render_weather(request, current_weather, city)
         except Exception as e:
             print(f"Error: {e}")
             import traceback
             traceback.print_exc()
             return render(request, 'weather.html', {'error': str(e), 'location': city})
+
+    lat = request.GET.get('lat')
+    lon = request.GET.get('lon')
+    if lat and lon:
+        try:
+            lat_f, lon_f = float(lat), float(lon)
+            if not (-90 <= lat_f <= 90 and -180 <= lon_f <= 180):
+                raise ValueError("Invalid coordinates")
+            current_weather = get_current_weather_by_coords(lat_f, lon_f)
+            geo = reverse_geocode(lat_f, lon_f)
+            label = geo.get('display_name', current_weather['city'])
+            return _render_weather(request, current_weather, label)
+        except (ValueError, TypeError):
+            return render(request, 'weather.html', {'error': 'Invalid location coordinates'})
+        except Exception as e:
+            print(f"Geolocation weather error: {e}")
+            return render(request, 'weather.html', {'error': str(e)})
 
     return render(request, 'weather.html')
