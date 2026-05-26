@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import dj_database_url
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -95,8 +96,14 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    },
 }
+
+NEON_DATABASE_URL = os.environ.get('NEON_DATABASE_URL', '')
+if NEON_DATABASE_URL:
+    DATABASES['neon'] = dj_database_url.parse(NEON_DATABASE_URL)
+
+DATABASE_ROUTERS = ['weatherProject.db_router.NeonRouter']
 
 
 # Password validation
